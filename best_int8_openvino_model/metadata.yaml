@@ -1,0 +1,31 @@
+description: Ultralytics YOLO11n model trained on trafficself/data.yaml
+author: Ultralytics
+date: '2025-05-29T22:23:56.992988'
+version: 8.3.146
+license: AGPL-3.0 License (https://ultralytics.com/license)
+docs: https://docs.ultralytics.com
+stride: 32
+task: detect
+batch: 1
+imgsz:
+- 640
+- 640
+names:
+  0: laixe
+  1: nguoi
+  2: tauhoa
+  3: xebuyt
+  4: xedap
+  5: xedaukeo
+  6: xedulich
+  7: xemay
+  8: xeoto
+  9: xetai
+args:
+  batch: 1
+  fraction: 1.0
+  half: false
+  int8: true
+  dynamic: false
+  nms: false
+channels: 3
