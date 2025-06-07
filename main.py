@@ -3,238 +3,400 @@ import time
 import threading
 import numpy as np
 from ultralytics import YOLO
+from collections import deque
+import queue
 
-# --- Thông số hiệu chỉnh khoảng cách ---
-ALPHA = 0.8
-
-# Cấu hình tối ưu cho Pi 4
-RESOLUTION = (416, 320)  # Giảm resolution để tăng tốc
-SKIP_FRAME = 4  # Tăng skip frame (chỉ detect mỗi 4 frame)
-MAX_BUFFER_SIZE = 2  # Giảm buffer
-
-# Load thông số hiệu chỉnh camera (tối ưu hóa một lần)
-try:
-    data = np.load("camera_calib.npz")
-    mtx = data["camera_matrix"]
-    dist = data["dist_coeffs"]
-    
-    # Pre-compute undistortion map để tránh tính toán lặp lại
-    h, w = RESOLUTION[1], RESOLUTION[0]
-    newcameramtx, roi = cv2.getOptimalNewCameraMatrix(mtx, dist, (w, h), 0, (w, h))
-    map1, map2 = cv2.initUndistortRectifyMap(mtx, dist, None, newcameramtx, (w, h), cv2.CV_16SC2)
-    use_undistort = True
-    print("Sử dụng camera calibration")
-except:
-    use_undistort = False
-    roi = (0, 0, RESOLUTION[0], RESOLUTION[1])
-    print("Không tìm thấy camera calibration, bỏ qua undistortion")
-
-# Tính tiêu cự (nếu có calibration)
-if use_undistort:
-    f_x = mtx[0, 0] * (RESOLUTION[0] / 640)  # Scale theo resolution mới
-    f_y = mtx[1, 1] * (RESOLUTION[1] / 480)
-    focal_length = (f_x + f_y) / 2
-else:
-    focal_length = 500  # Giá trị ước lượng
-
-REAL_HEIGHTS = {
-    0: 1.6,   # laixe
-    1: 1.6,   # nguoi
-    2: 4.0,   # tauhoa
-    3: 3.2,   # xebuyt
-    4: 1.1,   # xedap
-    5: 4.2,   # xedaukeo
-    6: 3.2,   # xedulich
-    7: 1.5,   # xemay
-    8: 1.5,   # xeoto
-    9: 3.0    # xetai
-}
-
-# Load mô hình YOLOv8 với cấu hình tối ưu
-print("Đang load YOLO model...")
-model = YOLO("best_int8_openvino_model/")
-model.overrides['verbose'] = False
-model.overrides['conf'] = 0.5  # Tăng confidence threshold để giảm số detection
-model.overrides['iou'] = 0.7   # Tăng IoU threshold để giảm NMS
-
-# Biến global tối ưu
-frame_buffer = []
-buffer_lock = threading.Lock()
-detection_results = None
-results_lock = threading.Lock()
-
-# Pre-allocate arrays để tránh memory allocation
-processed_frame = np.zeros((RESOLUTION[1], RESOLUTION[0], 3), dtype=np.uint8)
-
-def camera_thread():
-    """Thread đọc camera với buffer giới hạn"""
-    global frame_buffer
-    
-    cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, RESOLUTION[0])
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
-    cap.set(cv2.CAP_PROP_FPS, 30)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Giảm buffer của camera
-    
-    if not cap.isOpened():
-        print("Không thể mở webcam")
-        return
-    
-    print(f"Camera resolution: {cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}")
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            continue
+class OptimizedDetectionPipeline:
+    def __init__(self, model_path="best_int8_openvino_model/", camera_id=1):
+        # Cấu hình tối ưu
+        self.RESOLUTION = (416, 320)  # Giảm resolution để tăng tốc
+        self.DISPLAY_RESOLUTION = (640, 480)  # Resolution hiển thị
+        self.SKIP_FRAMES = 3  # Detect mỗi 3 frame
+        self.BUFFER_SIZE = 2
+        self.ALPHA = 0.8
+        
+        # Khởi tạo camera calibration
+        self._init_camera_calibration()
+        
+        # Khởi tạo YOLO model
+        self._init_yolo_model(model_path)
+        
+        # Threading và queues
+        self.frame_queue = queue.Queue(maxsize=self.BUFFER_SIZE)
+        self.detection_queue = queue.Queue(maxsize=1)
+        self.display_queue = queue.Queue(maxsize=1)
+        
+        # Control flags
+        self.running = True
+        self.stats = {
+            'camera_fps': 0,
+            'detection_fps': 0,
+            'display_fps': 0,
+            'total_fps': 0
+        }
+        
+        # Pre-allocated buffers để tránh memory allocation
+        self.processing_buffer = np.zeros((*self.RESOLUTION[::-1], 3), dtype=np.uint8)
+        self.display_buffer = np.zeros((*self.DISPLAY_RESOLUTION[::-1], 3), dtype=np.uint8)
+        
+        # Camera setup
+        self.camera_id = camera_id
+        
+    def _init_camera_calibration(self):
+        """Khởi tạo camera calibration một lần"""
+        try:
+            data = np.load("camera_calib.npz")
+            self.mtx = data["camera_matrix"]
+            self.dist = data["dist_coeffs"]
             
-        with buffer_lock:
-            if len(frame_buffer) >= MAX_BUFFER_SIZE:
-                frame_buffer.pop(0)  # Xóa frame cũ
-            frame_buffer.append(frame)
-    
-    cap.release()
-
-def detection_thread():
-    """Thread riêng cho YOLO detection"""
-    global detection_results
-    
-    while True:
-        current_frame = None
-        
-        # Lấy frame mới nhất
-        with buffer_lock:
-            if frame_buffer:
-                current_frame = frame_buffer[-1].copy()
-        
-        if current_frame is None:
-            time.sleep(0.01)
-            continue
-        
-        # Xử lý frame
-        if use_undistort:
-            # Sử dụng remap thay vì undistort (nhanh hơn ~30%)
-            cv2.remap(current_frame, map1, map2, cv2.INTER_LINEAR, processed_frame)
-            x, y, w_roi, h_roi = roi
-            processed_frame = processed_frame[y:y + h_roi, x:x + w_roi]
-        else:
-            processed_frame = current_frame
-        
-        # YOLO detection
-        start_time = time.time()
-        results = model(processed_frame, verbose=False)[0]
-        detection_time = time.time() - start_time
-        
-        # Lưu kết quả
-        with results_lock:
-            detection_results = {
-                'boxes': results.boxes,
-                'frame': processed_frame.copy(),
-                'detection_time': detection_time,
-                'timestamp': time.time()
-            }
-        
-        # Tạm dừng để tránh CPU 100%
-        time.sleep(0.05)
-
-def main():
-    global detection_results
-    
-    # Khởi động threads
-    cam_thread = threading.Thread(target=camera_thread)
-    cam_thread.daemon = True
-    cam_thread.start()
-    
-    det_thread = threading.Thread(target=detection_thread)
-    det_thread.daemon = True
-    det_thread.start()
-    
-    # Đợi camera khởi động
-    time.sleep(2)
-    
-    # Biến FPS
-    frame_count = 0
-    fps_start_time = time.time()
-    display_fps = 0
-    yolo_fps = 0
-    
-    last_detection_time = 0
-    
-    print("Bắt đầu detection. Nhấn 'q' để thoát.")
-    
-    while True:
-        display_frame = None
-        current_detection = None
-        
-        # Lấy frame hiện tại từ buffer
-        with buffer_lock:
-            if frame_buffer:
-                display_frame = frame_buffer[-1].copy()
-        
-        # Lấy kết quả detection mới nhất
-        with results_lock:
-            if detection_results and detection_results['timestamp'] > last_detection_time:
-                current_detection = detection_results.copy()
-                last_detection_time = current_detection['timestamp']
-        
-        if display_frame is None:
-            continue
-        
-        # Xử lý frame để hiển thị (đơn giản hóa)
-        if use_undistort:
-            cv2.remap(display_frame, map1, map2, cv2.INTER_LINEAR, processed_frame)
-            x, y, w_roi, h_roi = roi
-            display_frame = processed_frame[y:y + h_roi, x:x + w_roi]
-        
-        # Vẽ detection results nếu có
-        if current_detection and current_detection['boxes'] is not None:
-            yolo_fps = 1.0 / current_detection['detection_time'] if current_detection['detection_time'] > 0 else 0
+            # Pre-compute undistortion maps cho cả 2 resolution
+            # Processing resolution (cho YOLO)
+            self.newcameramtx_proc, self.roi_proc = cv2.getOptimalNewCameraMatrix(
+                self.mtx, self.dist, self.RESOLUTION, 0, self.RESOLUTION
+            )
+            self.map1_proc, self.map2_proc = cv2.initUndistortRectifyMap(
+                self.mtx, self.dist, None, self.newcameramtx_proc, 
+                self.RESOLUTION, cv2.CV_16SC2
+            )
             
-            for box in current_detection['boxes']:
-                cls_id = int(box.cls[0].item())
-                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                conf = float(box.conf[0].item())
+            # Display resolution (cho hiển thị)
+            self.newcameramtx_disp, self.roi_disp = cv2.getOptimalNewCameraMatrix(
+                self.mtx, self.dist, self.DISPLAY_RESOLUTION, 0, self.DISPLAY_RESOLUTION
+            )
+            self.map1_disp, self.map2_disp = cv2.initUndistortRectifyMap(
+                self.mtx, self.dist, None, self.newcameramtx_disp, 
+                self.DISPLAY_RESOLUTION, cv2.CV_16SC2
+            )
+            
+            # Tính focal length cho processing resolution
+            f_x = self.newcameramtx_proc[0, 0]
+            f_y = self.newcameramtx_proc[1, 1]
+            self.focal_length = (f_x + f_y) / 2
+            
+            self.use_calibration = True
+            print(f"✓ Camera calibration loaded - Processing: {self.RESOLUTION}, Display: {self.DISPLAY_RESOLUTION}")
+            
+        except Exception as e:
+            print(f"⚠ Camera calibration failed: {e}")
+            self.use_calibration = False
+            self.focal_length = 400  # Estimated focal length
+            self.roi_proc = (0, 0, self.RESOLUTION[0], self.RESOLUTION[1])
+            self.roi_disp = (0, 0, self.DISPLAY_RESOLUTION[0], self.DISPLAY_RESOLUTION[1])
+    
+    def _init_yolo_model(self, model_path):
+        """Khởi tạo YOLO model với cấu hình tối ưu"""
+        print("🔄 Loading YOLO model...")
+        self.model = YOLO(model_path)
+        
+        # Tối ưu cấu hình YOLO
+        self.model.overrides.update({
+            'verbose': False,
+            'conf': 0.5,      # Tăng confidence để giảm false positive
+            'iou': 0.7,       # Tăng IoU để giảm NMS computation
+            'max_det': 20,    # Giới hạn số detection
+            'device': 'cpu',
+            'half': False,    # Tắt FP16 trên CPU
+        })
+        
+        # Real heights dictionary
+        self.REAL_HEIGHTS = {
+            0: 1.6,   # laixe
+            1: 1.6,   # nguoi  
+            2: 4.0,   # tauhoa
+            3: 3.2,   # xebuyt
+            4: 1.1,   # xedap
+            5: 4.2,   # xedaukeo
+            6: 3.2,   # xedulich
+            7: 1.5,   # xemay
+            8: 1.5,   # xeoto
+            9: 3.0    # xetai
+        }
+        
+        print("✓ YOLO model loaded successfully")
+    
+    def camera_thread(self):
+        """Thread 1: Đọc frame từ camera"""
+        cap = cv2.VideoCapture(self.camera_id, cv2.CAP_DSHOW)
+        
+        # Cấu hình camera tối ưu
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.DISPLAY_RESOLUTION[0])
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.DISPLAY_RESOLUTION[1])
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Giảm buffer lag
+        
+        if not cap.isOpened():
+            print("❌ Cannot open camera")
+            self.running = False
+            return
+        
+        print(f"✓ Camera opened: {cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}")
+        
+        frame_count = 0
+        fps_start = time.time()
+        
+        while self.running:
+            ret, frame = cap.read()
+            if not ret:
+                continue
+            
+            # Chỉ undistort nếu cần thiết và queue không đầy
+            if not self.frame_queue.full():
+                if self.use_calibration:
+                    # Undistort cho display resolution
+                    cv2.remap(frame, self.map1_disp, self.map2_disp, 
+                             cv2.INTER_LINEAR, self.display_buffer)
+                    x, y, w, h = self.roi_disp
+                    processed_frame = self.display_buffer[y:y+h, x:x+w].copy()
+                else:
+                    processed_frame = frame.copy()
                 
-                if conf < 0.5:  # Skip low confidence
+                try:
+                    self.frame_queue.put_nowait({
+                        'frame': processed_frame,
+                        'timestamp': time.time()
+                    })
+                except queue.Full:
+                    pass  # Skip frame nếu queue đầy
+            
+            # Tính camera FPS
+            frame_count += 1
+            if time.time() - fps_start >= 1.0:
+                self.stats['camera_fps'] = frame_count / (time.time() - fps_start)
+                frame_count = 0
+                fps_start = time.time()
+        
+        cap.release()
+        print("📷 Camera thread stopped")
+    
+    def detection_thread(self):
+        """Thread 2: YOLO detection"""
+        frame_counter = 0
+        detection_count = 0
+        fps_start = time.time()
+        
+        while self.running:
+            try:
+                # Lấy frame mới nhất từ queue
+                frame_data = self.frame_queue.get(timeout=0.1)
+                frame_counter += 1
+                
+                # Chỉ detect mỗi SKIP_FRAMES frame
+                if frame_counter % self.SKIP_FRAMES != 0:
                     continue
                 
-                label = model.names[cls_id]
-                pixel_height = y2 - y1
+                display_frame = frame_data['frame']
                 
-                # Tính khoảng cách (nếu có trong REAL_HEIGHTS)
-                distance_text = ""
-                if cls_id in REAL_HEIGHTS and pixel_height > 10:  # Tránh divide by zero
-                    real_height = REAL_HEIGHTS[cls_id]
-                    distance = ALPHA * (real_height * focal_length) / pixel_height
-                    distance_text = f" ({distance:.1f}m)"
+                # Resize frame cho YOLO (nhỏ hơn để tăng tốc)
+                detection_frame = cv2.resize(display_frame, self.RESOLUTION)
                 
-                # Vẽ bounding box
-                cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                # Undistort cho detection nếu cần
+                if self.use_calibration:
+                    cv2.remap(detection_frame, self.map1_proc, self.map2_proc,
+                             cv2.INTER_LINEAR, self.processing_buffer)
+                    x, y, w, h = self.roi_proc
+                    detection_frame = self.processing_buffer[y:y+h, x:x+w]
                 
-                # Vẽ label (tối ưu hóa text)
-                text = f"{label}{distance_text}"
-                cv2.putText(display_frame, text, (x1, y1 - 10),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+                # YOLO inference
+                start_time = time.time()
+                results = self.model(detection_frame, verbose=False)[0]
+                inference_time = time.time() - start_time
+                
+                # Xử lý kết quả detection
+                detections = self._process_detections(results, display_frame.shape)
+                
+                # Gửi kết quả tới display thread
+                detection_data = {
+                    'frame': display_frame,
+                    'detections': detections,
+                    'inference_time': inference_time,
+                    'timestamp': time.time()
+                }
+                
+                # Chỉ giữ detection mới nhất
+                if not self.detection_queue.empty():
+                    try:
+                        self.detection_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                
+                self.detection_queue.put_nowait(detection_data)
+                
+                detection_count += 1
+                if time.time() - fps_start >= 1.0:
+                    self.stats['detection_fps'] = detection_count / (time.time() - fps_start)
+                    detection_count = 0
+                    fps_start = time.time()
+                
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"Detection error: {e}")
+                continue
         
-        # Tính FPS display
-        frame_count += 1
-        if time.time() - fps_start_time >= 1.0:
-            display_fps = frame_count / (time.time() - fps_start_time)
-            frame_count = 0
-            fps_start_time = time.time()
-        
-        # Hiển thị FPS (đơn giản hóa)
-        cv2.putText(display_frame, f"FPS: {display_fps:.1f}", (10, 25),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        cv2.putText(display_frame, f"YOLO: {yolo_fps:.1f}", (10, 50),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-        
-        # Hiển thị
-        cv2.imshow("Optimized YOLO", display_frame)
-        
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+        print("🎯 Detection thread stopped")
     
-    cv2.destroyAllWindows()
+    def _process_detections(self, results, frame_shape):
+        """Xử lý kết quả detection và scale về frame gốc"""
+        detections = []
+        
+        if results.boxes is None:
+            return detections
+        
+        # Scale factor từ detection frame về display frame
+        scale_x = frame_shape[1] / self.RESOLUTION[0]
+        scale_y = frame_shape[0] / self.RESOLUTION[1]
+        
+        for box in results.boxes:
+            cls_id = int(box.cls[0].item())
+            conf = float(box.conf[0].item())
+            
+            if conf < 0.4:  # Filter low confidence
+                continue
+            
+            # Scale coordinates về display frame
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            x1, x2 = int(x1 * scale_x), int(x2 * scale_x)
+            y1, y2 = int(y1 * scale_y), int(y2 * scale_y)
+            
+            # Tính khoảng cách
+            distance = None
+            if cls_id in self.REAL_HEIGHTS:
+                pixel_height = y2 - y1
+                if pixel_height > 10:  # Tránh division by zero
+                    real_height = self.REAL_HEIGHTS[cls_id]
+                    distance = self.ALPHA * (real_height * self.focal_length) / pixel_height
+            
+            detections.append({
+                'bbox': (x1, y1, x2, y2),
+                'class_id': cls_id,
+                'confidence': conf,
+                'label': self.model.names[cls_id],
+                'distance': distance
+            })
+        
+        return detections
+    
+    def display_thread(self):
+        """Thread 3: Hiển thị kết quả"""
+        display_count = 0
+        fps_start = time.time()
+        last_frame = None
+        
+        while self.running:
+            try:
+                # Lấy detection mới nhất
+                detection_data = self.detection_queue.get(timeout=0.1)
+                
+                frame = detection_data['frame']
+                detections = detection_data['detections']
+                
+                # Vẽ detection results
+                annotated_frame = self._draw_detections(frame, detections)
+                
+                # Vẽ FPS info
+                self._draw_fps_info(annotated_frame)
+                
+                # Hiển thị
+                cv2.imshow("Optimized YOLO Detection", annotated_frame)
+                last_frame = annotated_frame
+                
+                display_count += 1
+                if time.time() - fps_start >= 1.0:
+                    self.stats['display_fps'] = display_count / (time.time() - fps_start)
+                    self.stats['total_fps'] = display_count / (time.time() - fps_start)
+                    display_count = 0
+                    fps_start = time.time()
+                
+            except queue.Empty:
+                # Hiển thị frame cuối nếu không có detection mới
+                if last_frame is not None:
+                    self._draw_fps_info(last_frame)
+                    cv2.imshow("Optimized YOLO Detection", last_frame)
+                continue
+            
+            # Check for quit
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                self.running = False
+                break
+        
+        cv2.destroyAllWindows()
+        print("🖥️ Display thread stopped")
+    
+    def _draw_detections(self, frame, detections):
+        """Vẽ bounding boxes và labels"""
+        annotated_frame = frame.copy()
+        
+        for det in detections:
+            x1, y1, x2, y2 = det['bbox']
+            label = det['label']
+            conf = det['confidence']
+            distance = det['distance']
+            
+            # Vẽ bounding box
+            cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            
+            # Tạo label text
+            if distance is not None:
+                text = f"{label} {distance:.1f}m ({conf:.2f})"
+            else:
+                text = f"{label} ({conf:.2f})"
+            
+            # Vẽ label
+            cv2.putText(annotated_frame, text, (x1, y1 - 10),
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        
+        return annotated_frame
+    
+    def _draw_fps_info(self, frame):
+        """Vẽ thông tin FPS"""
+        y_offset = 30
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        
+        fps_texts = [
+            f"Total FPS: {self.stats['total_fps']:.1f}",
+            f"Camera: {self.stats['camera_fps']:.1f}",
+            f"Detection: {self.stats['detection_fps']:.1f}",
+            f"Display: {self.stats['display_fps']:.1f}"
+        ]
+        
+        for i, text in enumerate(fps_texts):
+            cv2.putText(frame, text, (10, y_offset + i * 25),
+                       font, 0.6, (0, 255, 0), 2)
+    
+    def run(self):
+        """Chạy pipeline"""
+        print("🚀 Starting optimized detection pipeline...")
+        
+        # Khởi động các threads
+        threads = [
+            threading.Thread(target=self.camera_thread, name="Camera"),
+            threading.Thread(target=self.detection_thread, name="Detection"),
+            threading.Thread(target=self.display_thread, name="Display")
+        ]
+        
+        for thread in threads:
+            thread.daemon = True
+            thread.start()
+        
+        try:
+            # Chờ display thread (chính)
+            threads[2].join()
+        except KeyboardInterrupt:
+            print("\n⏹️ Stopping pipeline...")
+            self.running = False
+        
+        # Chờ các threads khác dừng
+        for thread in threads[:-1]:
+            thread.join(timeout=1.0)
+        
+        print("✅ Pipeline stopped successfully")
 
+# Sử dụng
 if __name__ == "__main__":
-    main()
+    # Khởi tạo và chạy pipeline
+    pipeline = OptimizedDetectionPipeline(
+        model_path="best_int8_openvino_model/",
+        camera_id=1
+    )
+    
+    pipeline.run()
