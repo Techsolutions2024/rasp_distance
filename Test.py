@@ -363,17 +363,13 @@ class AccurateDetectionPipeline:
     
     def _draw_info(self, frame):
         """Vẽ thông tin FPS và status"""
-        # FPS tổng
         
-        # Detection FPS
+        
+        #  FPS
         cv2.putText(frame, f"FPS: {self.detection_fps:.1f}", (10, 60),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
         
-        # Queue status
-        frame_queue_size = self.frame_queue.qsize()
-        detection_queue_size = self.detection_queue.qsize()
-        cv2.putText(frame, f"Q: {frame_queue_size}/{detection_queue_size}", (10, 90),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
     
     def run(self):
         """Chạy pipeline"""
