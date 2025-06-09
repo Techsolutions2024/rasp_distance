@@ -352,7 +352,7 @@ class AccurateDetectionPipeline:
             (255, 0, 0),    # bicycle - blue  
             (0, 0, 255),    # car - red
             (255, 255, 0),  # motorcycle - cyan
-            #(255, 0, 255),  # airplane - magenta
+            (255, 0, 255),  # airplane - magenta
             (0, 255, 255),  # bus - yellow
             (128, 0, 128),  # train - purple
             (255, 165, 0),  # truck - orange
