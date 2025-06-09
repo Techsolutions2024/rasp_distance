@@ -343,7 +343,7 @@ class AccurateDetectionPipeline:
             
             # Text
             cv2.putText(frame, text, (x1, y1 - 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2.5)
     
     def _get_class_color(self, class_id):
         """Lấy màu cho từng class với mapping chính xác"""
