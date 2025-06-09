@@ -9,7 +9,7 @@ import queue
 class AccurateDetectionPipeline:
     def __init__(self, model_path="best_int8_openvino_model/", camera_id=0):
         # Cấu hình để có bbox chính xác
-        self.CAMERA_RESOLUTION = (1200, 800)  # Resolution gốc từ camera
+        self.CAMERA_RESOLUTION = (640, 480)  # Resolution gốc từ camera
         self.DETECTION_RESOLUTION = (416, 320)  # Resolution cho YOLO
         self.SKIP_FRAMES = 0  # Không skip frame để tracking liên tục
         self.BUFFER_SIZE = 2  # Tăng buffer để không drop frame
