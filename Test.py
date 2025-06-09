@@ -303,6 +303,9 @@ class AccurateDetectionPipeline:
                 self._draw_info(frame)
                 
                 # Hiển thị
+                #cv2.imshow("Accurate YOLO Detection", frame)
+                cv2.namedWindow("Accurate YOLO Detection", cv2.WINDOW_NORMAL)
+                cv2.resizeWindow("Accurate YOLO Detection", 1200, 800)  # Kích thước tùy ý
                 cv2.imshow("Accurate YOLO Detection", frame)
                 
                 # Check quit
