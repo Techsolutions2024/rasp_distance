@@ -345,21 +345,28 @@ class AccurateDetectionPipeline:
             cv2.putText(frame, text, (x1, y1 - 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
+
+
     def _get_class_color(self, class_id):
-        """Lấy màu cho từng class"""
-        colors = [
-            #(0, 255, 0),    # person - green
-            (255, 0, 0),    # bicycle - blue  
-            (0, 0, 255),    # car - red
-            (255, 255, 0),  # motorcycle - cyan
-            (255, 0, 255),  # airplane - magenta
-            (0, 255, 255),  # bus - yellow
-            (128, 0, 128),  # train - purple
-            (255, 165, 0),  # truck - orange
-            #(0, 128, 255),  # boat - light blue
-            #(128, 128, 0),  # traffic light - olive
-        ]
-        return colors[class_id % len(colors)]
+    """Lấy màu cho từng class với mapping chính xác"""
+    # Mapping màu theo class_id cụ thể
+    color_map = {
+        3: (0, 255, 0),      # person - green
+        4: (255, 0, 0),      # bicycle - blue  
+        5: (0, 0, 255),      # car - red
+        6: (255, 255, 0),    # motorcycle - cyan/yellow
+        7: (255, 0, 255),    # airplane - magenta
+        8: (0, 255, 255),    # bus - yellow
+        9: (128, 0, 128),    # train - purple
+        #7: (255, 165, 0),    # truck - orange (xe máy?)
+        #8: (0, 128, 255),    # boat - light blue (ô tô?)
+        #9: (128, 128, 0),    # traffic light - olive (xe tải?)
+        # Thêm các class khác nếu có
+    }
+    
+    # Trả về màu mặc định nếu class_id không có trong map
+        return color_map.get(class_id, (128, 128, 128))  # Gray mặc định
+    
     
     def _draw_info(self, frame):
         """Vẽ thông tin FPS và status"""
