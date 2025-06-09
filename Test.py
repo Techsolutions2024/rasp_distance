@@ -43,7 +43,7 @@ class AccurateDetectionPipeline:
         
         # OPTION 1: CHỈ detect một số class nhất định
         # Nếu muốn CHỈ detect những class này, uncomment dòng dưới:
-        self.ALLOWED_CLASSES = {4,8,9, 3, 6,5, 0}  # chỉ detect person, car, bus, truck
+        self.ALLOWED_CLASSES = {4,8,9, 3, 6,5, 7}  # chỉ detect person, car, bus, truck
         #self.ALLOWED_CLASSES = None  # None = detect tất cả class
         
         # OPTION 2: Các class sẽ tính khoảng cách (có thể khác với ALLOWED_CLASSES)
@@ -55,7 +55,7 @@ class AccurateDetectionPipeline:
             4: 1.6,   # xe đạp
             5: 4.2,   # xe đầu kéo
             6: 3.2,   # xe du lịch 
-            0: 1.5,   # xe máy
+            7: 1.5,   # xe máy
             8: 2.3,   # ô tô
             9: 3.0,   # xe tải
             # Thêm các class khác theo nhu cầu
@@ -272,7 +272,7 @@ class AccurateDetectionPipeline:
                 'bbox': (x1_scaled, y1_scaled, x2_scaled, y2_scaled),
                 'class_id': cls_id,
                 'confidence': conf,
-                'label': self.model.names[cls_id],
+                'label': cls_id,  # ✅ THAY ĐỔI: Sử dụng class_id thay vì tên
                 'distance': distance
             })
         
@@ -317,24 +317,24 @@ class AccurateDetectionPipeline:
         print("🖥️ Display stopped")
     
     def _draw_detections(self, frame, detections):
-        """Vẽ detections với thông tin đầy đủ"""
+        """Vẽ detections với thông tin đầy đủ - HIỂN THỊ ID thay vì tên"""
         for det in detections:
             x1, y1, x2, y2 = det['bbox']
-            label = det['label']
+            class_id = det['class_id']  # ✅ Lấy class_id
             conf = det['confidence']
             distance = det['distance']
             
             # Màu sắc theo class
-            color = self._get_class_color(det['class_id'])
+            color = self._get_class_color(class_id)
             
             # Vẽ bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # Label với confidence và distance
+            # ✅ THAY ĐỔI: Hiển thị ID thay vì tên
             if distance is not None:
-                text = f"{label} {conf:.2f} - {distance:.1f}m"
+                text = f"ID:{class_id} {conf:.2f} - {distance:.1f}m"
             else:
-                text = f"{label} {conf:.2f}"
+                text = f"ID:{class_id} {conf:.2f}"
             
             # Background cho text
             text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
@@ -345,38 +345,27 @@ class AccurateDetectionPipeline:
             cv2.putText(frame, text, (x1, y1 - 5),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     
-
-
     def _get_class_color(self, class_id):
-    """Lấy màu cho từng class với mapping chính xác"""
-    # Mapping màu theo class_id cụ thể
-    color_map = {
-        3: (0, 255, 0),      # person - green
-        4: (255, 0, 0),      # bicycle - blue  
-        5: (0, 0, 255),      # car - red
-        6: (255, 255, 0),    # motorcycle - cyan/yellow
-        0: (255, 0, 255),    # airplane - magenta
-        8: (0, 255, 255),    # bus - yellow
-        9: (128, 0, 128),    # train - purple
-        #7: (255, 165, 0),    # truck - orange (xe máy?)
-        #8: (0, 128, 255),    # boat - light blue (ô tô?)
-        #9: (128, 128, 0),    # traffic light - olive (xe tải?)
-        # Thêm các class khác nếu có
-    }
-    
-    # Trả về màu mặc định nếu class_id không có trong map
+        """Lấy màu cho từng class với mapping chính xác"""
+        # Mapping màu theo class_id cụ thể
+        color_map = {
+            7: (255, 0, 255),    # ID:0 - magenta
+            3: (0, 255, 0),      # ID:3 - green
+            4: (255, 0, 0),      # ID:4 - blue  
+            5: (0, 0, 255),      # ID:5 - red
+            6: (255, 255, 0),    # ID:6 - cyan/yellow
+            8: (0, 255, 255),    # ID:8 - yellow
+            9: (128, 0, 128),    # ID:9 - purple
+        }
+        
+        # Trả về màu mặc định nếu class_id không có trong map
         return color_map.get(class_id, (128, 128, 128))  # Gray mặc định
-    
     
     def _draw_info(self, frame):
         """Vẽ thông tin FPS và status"""
-        
-        
-        #  FPS
+        # FPS
         cv2.putText(frame, f"FPS: {self.detection_fps:.1f}", (10, 60),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-        
-
     
     def run(self):
         """Chạy pipeline"""
@@ -386,13 +375,11 @@ class AccurateDetectionPipeline:
         print(f"📏 Scale factors: {self.scale_x:.2f}x, {self.scale_y:.2f}x")
         
         if self.ALLOWED_CLASSES is not None:
-            allowed_names = [self.model.names[i] for i in self.ALLOWED_CLASSES]
-            print(f"🎪 Only detect classes: {allowed_names}")
+            print(f"🎪 Only detect class IDs: {sorted(list(self.ALLOWED_CLASSES))}")
         else:
             print(f"🎪 Detect ALL classes, distance for: {list(self.CUSTOM_REAL_HEIGHTS.keys())}")
         
-        distance_names = [self.model.names[i] for i in self.CUSTOM_REAL_HEIGHTS.keys()]
-        print(f"📏 Distance calculation for: {distance_names}")
+        print(f"📏 Distance calculation for class IDs: {list(self.CUSTOM_REAL_HEIGHTS.keys())}")
         
         # Khởi động threads
         threads = [
