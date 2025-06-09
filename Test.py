@@ -337,13 +337,13 @@ class AccurateDetectionPipeline:
                 text = f"ID:{class_id} {conf:.2f}"
             
             # Background cho text
-            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0]
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1, 1)[0]
             cv2.rectangle(frame, (x1, y1 - text_size[1] - 10), 
                          (x1 + text_size[0], y1), color, -1)
             
             # Text
             cv2.putText(frame, text, (x1, y1 - 5),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 1)
     
     def _get_class_color(self, class_id):
         """Lấy màu cho từng class với mapping chính xác"""
@@ -353,8 +353,8 @@ class AccurateDetectionPipeline:
             3: (0, 255, 0),      # ID:3 - green
             4: (255, 0, 0),      # ID:4 - blue  
             5: (0, 0, 255),      # ID:5 - red
-            6: (255, 255, 0),    # ID:6 - cyan/yellow
-            8: (0, 255, 255),    # ID:8 - yellow
+            6: (0, 255, 0),    # ID:6 - cyan/yellow
+            8: (0, 255, 0),    # ID:8 - yellow
             9: (128, 0, 128),    # ID:9 - purple
         }
         
