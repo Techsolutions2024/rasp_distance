@@ -43,21 +43,21 @@ class AccurateDetectionPipeline:
         
         # OPTION 1: CHỈ detect một số class nhất định
         # Nếu muốn CHỈ detect những class này, uncomment dòng dưới:
-        self.ALLOWED_CLASSES = {1, 2, 3, 6,5, 7}  # chỉ detect person, car, bus, truck
+        self.ALLOWED_CLASSES = {4,8,9, 3, 6,5, 7}  # chỉ detect person, car, bus, truck
         #self.ALLOWED_CLASSES = None  # None = detect tất cả class
         
         # OPTION 2: Các class sẽ tính khoảng cách (có thể khác với ALLOWED_CLASSES)
         self.CUSTOM_REAL_HEIGHTS = {
             #0: 1.7,   # person - chiều cao người (m)
-            1: 1.6,   # bicycle
-            2: 4.0,   # car
-            3: 3.2,   # motorcycle  
-            #4: 1.1,   # airplane
-            5: 4.2,   # bus
-            6: 3.2,   # train
-            7: 1.5,   # truck
-            #8: 1.5,   # boat
-            #9: 3.0,   # traffic light
+            #1: 1.6,   # bicycle
+            #2: 4.0,   # 
+            3: 3.2,   # bus
+            4: 1.6,   # xe đạp
+            5: 4.2,   # xe đầu kéo
+            6: 3.2,   # xe du lịch 
+            7: 1.5,   # xe máy
+            8: 2.3,   # ô tô
+            9: 3.0,   # xe tải
             # Thêm các class khác theo nhu cầu
             # 10: 2.0,  # fire hydrant
             # 11: 1.2,  # stop sign
