@@ -366,7 +366,7 @@ class AccurateDetectionPipeline:
         # FPS tổng
         
         # Detection FPS
-        cv2.putText(frame, f"Detection: {self.detection_fps:.1f}", (10, 60),
+        cv2.putText(frame, f"FPS: {self.detection_fps:.1f}", (10, 60),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         
         # Queue status
