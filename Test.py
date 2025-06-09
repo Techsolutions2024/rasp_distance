@@ -301,12 +301,16 @@ class AccurateDetectionPipeline:
                 
                 # Vẽ thông tin
                 self._draw_info(frame)
-                
-                # Hiển thị
-                #cv2.imshow("Accurate YOLO Detection", frame)
+                # THÊM: Resize frame để fill đầy cửa sổ hiển thị
+                display_width = 1200
+                display_height = 800
+                display_frame = cv2.resize(frame, (display_width, display_height))
+
+# Tạo cửa sổ và hiển thị frame đã resize
                 cv2.namedWindow("Accurate YOLO Detection", cv2.WINDOW_NORMAL)
-                cv2.resizeWindow("Accurate YOLO Detection", 1200, 800)  # Kích thước tùy ý
-                cv2.imshow("Accurate YOLO Detection", frame)
+                cv2.resizeWindow("Accurate YOLO Detection", display_width, display_height)
+                cv2.imshow("Accurate YOLO Detection", display_frame)
+
                 
                 # Check quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):
