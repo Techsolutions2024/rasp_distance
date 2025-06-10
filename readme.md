@@ -112,3 +112,21 @@ Thì có thể dùng để:
 distance = ALPHA * (real_height * focal_length) / pixel_height
 ```
 
+datasets:
+
+https://universe.roboflow.com/tivasolutions-atf4b/bdd100k-e3s18-qjcc3/dataset/2
+
+
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 4
+names: ['bus', 'car', 'motor', 'truck']
+
+roboflow:
+  workspace: tivasolutions-atf4b
+  project: bdd100k-e3s18-qjcc3
+  version: 1
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/tivasolutions-atf4b/bdd100k-e3s18-qjcc3/dataset/1
