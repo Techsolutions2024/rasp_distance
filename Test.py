@@ -7,13 +7,28 @@ from collections import deque
 import queue
 
 class AccurateDetectionPipeline:
-    def __init__(self, model_path="best_int8_openvino_model/", camera_id=0):
+    def __init__(self, model_path="ok_openvino_model/", camera_id=0):
         # Cấu hình để có bbox chính xác
         self.CAMERA_RESOLUTION = (640, 480)  # Resolution gốc từ camera
         self.DETECTION_RESOLUTION = (416, 320)  # Resolution cho YOLO
         self.SKIP_FRAMES = 0  # Không skip frame để tracking liên tục
         self.BUFFER_SIZE = 2  # Tăng buffer để không drop frame
         self.ALPHA = 0.8
+        
+        # ✅ THÊM: Mapping class ID sang tên đối tượng
+        self.CLASS_NAMES = {
+            0: "bicycle",
+            1: "bus", 
+            2: "car",
+            3: "motorcycle",
+            4: "truck",
+            5: "van"
+            # Thêm các class khác nếu cần:
+            # 6: "person",
+            # 7: "dog",
+            # 8: "cat",
+            # ... (thêm theo model của bạn)
+        }
         
         # Khởi tạo camera calibration
         self._init_camera_calibration()
@@ -43,21 +58,18 @@ class AccurateDetectionPipeline:
         
         # OPTION 1: CHỈ detect một số class nhất định
         # Nếu muốn CHỈ detect những class này, uncomment dòng dưới:
-        self.ALLOWED_CLASSES = {4,8,9, 3, 6,5, 7}  # chỉ detect person, car, bus, truck
+        self.ALLOWED_CLASSES = {0,1,2,3,4,5}  # chỉ detect person, car, bus, truck
         #self.ALLOWED_CLASSES = None  # None = detect tất cả class
         
         # OPTION 2: Các class sẽ tính khoảng cách (có thể khác với ALLOWED_CLASSES)
         self.CUSTOM_REAL_HEIGHTS = {
-            #0: 1.7,   # person - chiều cao người (m)
-            #1: 1.6,   # bicycle
-            #2: 4.0,   # 
-            3: 3.2,   # bus
-            4: 1.6,   # xe đạp
-            5: 4.2,   # xe đầu kéo
-            6: 3.2,   # xe du lịch 
-            7: 1.5,   # xe máy
-            8: 2.3,   # ô tô
-            9: 3.0,   # xe tải
+            0: 1.5,   # bicycle
+            1: 3.2,   # bus
+            2: 2.3,   # car
+            3: 1.7,   # motorcycle
+            4: 3.0,   # truck
+            5: 3.2,   # van
+            
             # Thêm các class khác theo nhu cầu
             # 10: 2.0,  # fire hydrant
             # 11: 1.2,  # stop sign
@@ -129,7 +141,9 @@ class AccurateDetectionPipeline:
     
     def camera_thread(self):
         """Thread đọc camera - không drop frame"""
-        cap = cv2.VideoCapture(self.camera_id)
+        #cap = cv2.VideoCapture(self.camera_id)
+
+        cap = cv2.VideoCapture("1.mp4")
         
         # Cấu hình camera
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.CAMERA_RESOLUTION[0])
@@ -268,11 +282,12 @@ class AccurateDetectionPipeline:
                     # Sử dụng focal length đã calibration
                     distance = self.ALPHA * (real_height * self.focal_length) / pixel_height
             
+            # ✅ THAY ĐỔI: Lưu cả class_id và tên
             detections.append({
                 'bbox': (x1_scaled, y1_scaled, x2_scaled, y2_scaled),
                 'class_id': cls_id,
                 'confidence': conf,
-                'label': cls_id,  # ✅ THAY ĐỔI: Sử dụng class_id thay vì tên
+                'label': self.CLASS_NAMES.get(cls_id, f"Unknown_{cls_id}"),  # ✅ Sử dụng tên thay vì ID
                 'distance': distance
             })
         
@@ -308,8 +323,9 @@ class AccurateDetectionPipeline:
 
 # Tạo cửa sổ và hiển thị frame đã resize
                 #cv2.namedWindow("Accurate YOLO Detection", cv2.WINDOW_NORMAL)
-                #cv2.resizeWindow("Accurate YOLO Detection", display_width, display_height)
-                cv2.imshow("Accurate YOLO Detection", frame)
+                #framed = cv2.resize(frame, (1024,768))
+                framed = cv2.resize(frame, (1280,800))
+                cv2.imshow("Accurate YOLO Detection", framed)
 
                 
                 # Check quit
@@ -324,12 +340,13 @@ class AccurateDetectionPipeline:
         print("🖥️ Display stopped")
     
     def _draw_detections(self, frame, detections):
-        """Vẽ detections với thông tin đầy đủ - HIỂN THỊ ID thay vì tên"""
+        """Vẽ detections với thông tin đầy đủ - HIỂN THỊ TÊN thay vì ID"""
         for det in detections:
             x1, y1, x2, y2 = det['bbox']
-            class_id = det['class_id']  # ✅ Lấy class_id
+            class_id = det['class_id']
             conf = det['confidence']
             distance = det['distance']
+            label = det['label']  # ✅ Lấy tên đối tượng
             
             # Màu sắc theo class
             color = self._get_class_color(class_id)
@@ -337,14 +354,14 @@ class AccurateDetectionPipeline:
             # Vẽ bbox
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # ✅ THAY ĐỔI: Hiển thị ID thay vì tên
+            # ✅ THAY ĐỔI: Hiển thị TÊN thay vì ID
             if distance is not None:
-                text = f"ID:{class_id} {conf:.2f} - {distance:.1f}m"
+                text = f"{label} {conf:.2f} - {distance:.1f}m"
             else:
-                text = f"ID:{class_id} {conf:.2f}"
+                text = f"{label} {conf:.2f}"
             
             # Background cho text
-            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 1, 1)[0]
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 1)[0]
             cv2.rectangle(frame, (x1, y1 - text_size[1] - 10), 
                          (x1 + text_size[0], y1), color, -1)
             
@@ -356,13 +373,14 @@ class AccurateDetectionPipeline:
         """Lấy màu cho từng class với mapping chính xác"""
         # Mapping màu theo class_id cụ thể
         color_map = {
-            7: (255, 0, 255),    # ID:0 - magenta
-            3: (0, 255, 0),      # ID:3 - green
-            4: (255, 0, 0),      # ID:4 - blue  
-            5: (0, 0, 255),      # ID:5 - red
-            6: (0, 255, 0),    # ID:6 - cyan/yellow
-            8: (0, 255, 0),    # ID:8 - yellow
-            9: (128, 0, 128),    # ID:9 - purple
+            0: (255, 0, 255),    # ID:0 - bicycle
+            1: (0, 200, 0),      # ID:1 - bus
+            2: (255, 0, 0),      # ID:2 - car 
+            3: (0, 0, 255),      # ID:3 - motorcycle
+            4: (0, 128, 0),      # ID:4 - truck
+            5: (0, 255, 0),      # ID:5 - van
+            # Thêm các class khác nếu cần
+            
         }
         
         # Trả về màu mặc định nếu class_id không có trong map
@@ -414,7 +432,7 @@ class AccurateDetectionPipeline:
 # Sử dụng
 if __name__ == "__main__":
     pipeline = AccurateDetectionPipeline(
-        model_path="best_int8_openvino_model/",
+        model_path="ok_openvino_model/",
         camera_id=0
     )
     pipeline.run()
